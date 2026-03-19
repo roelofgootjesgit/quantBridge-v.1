@@ -26,14 +26,17 @@ Implemented now:
 - error taxonomy
 - health model
 - smoke test flow (connect, price, place, close)
+- startup recovery + state registry
+- state validator + reconciliation actions
+- runtime control loop (continuous sync + failsafe pause)
 
 Partially implemented:
 - cTrader Open API connect/auth + basic request flows
 
 Not yet complete:
-- production-grade reconnect and retry policy
-- reconciliation persistence across process restarts
 - multi-account routing engine
+- execution confirmation after each order fill
+- full monitoring dashboard and metrics backend
 
 ## Repository Structure
 
@@ -44,6 +47,8 @@ docs/
   ROADMAP.md
 scripts/
   ctrader_smoke.py
+  recover_execution_state.py
+  run_runtime_control.py
 src/quantbridge/
   execution/
     broker_contract.py
@@ -79,6 +84,22 @@ python scripts/ctrader_smoke.py --config configs/ctrader_icmarkets_demo.yaml --m
 ```bash
 python scripts/recover_execution_state.py --config configs/ctrader_icmarkets_demo.yaml --mode openapi --registry-path state/positions.json --strategy OCLW
 ```
+
+6) Run runtime control loop (continuous sync + failsafe):
+
+```bash
+python scripts/run_runtime_control.py --config configs/ctrader_icmarkets_demo.yaml --mode openapi --registry-path state/positions.json --strategy OCLW
+```
+
+Optional dry run (single poll loop):
+
+```bash
+python scripts/run_runtime_control.py --config configs/ctrader_icmarkets_demo.yaml --mode openapi --max-iterations 1
+```
+
+Optional Telegram alerts:
+- set `TELEGRAM_BOT_TOKEN`
+- set `TELEGRAM_CHAT_ID`
 
 Auth help:
 - `docs/AUTH_SETUP.md`
