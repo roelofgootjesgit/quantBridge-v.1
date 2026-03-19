@@ -10,17 +10,17 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from quantbridge.ops.observability import summarize_jsonl_events
+from quantbridge.ops.observability import rotate_jsonl_events
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Summarize QuantBridge JSONL observability events.")
+    parser = argparse.ArgumentParser(description="Rotate QuantBridge JSONL observability log file.")
     parser.add_argument("--events-file", default="logs/events.jsonl")
-    parser.add_argument("--since-minutes", type=int, default=None)
+    parser.add_argument("--archive-dir", default="logs/archive")
     args = parser.parse_args()
 
-    summary = summarize_jsonl_events(args.events_file, since_minutes=args.since_minutes)
-    print(json.dumps(summary.__dict__, indent=2))
+    result = rotate_jsonl_events(path=args.events_file, archive_dir=args.archive_dir)
+    print(json.dumps(result, indent=2))
     return 0
 
 

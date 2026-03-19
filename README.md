@@ -49,8 +49,10 @@ Not yet complete:
 configs/
   ctrader_icmarkets_demo.yaml
   accounts_baseline.yaml
+  suite_profiles.yaml
 docs/
   ROADMAP.md
+  PAPER_ROLLOUT.md
 scripts/
   ctrader_smoke.py
   recover_execution_state.py
@@ -58,6 +60,10 @@ scripts/
   run_order_lifecycle_check.py
   run_account_orchestration_check.py
   run_multi_account_execution_check.py
+  run_vps_paper_cycle.py
+  validate_account_env.py
+  account_control.py
+  rotate_observability_events.py
   summarize_observability.py
 src/quantbridge/
   execution/
@@ -186,8 +192,40 @@ This runs:
 - account orchestration check
 - multi-account execution checks (single / primary_backup / fanout)
 
+11) Run VPS paper cycle profile (startup gate + suite + runtime probe):
+
+```bash
+python scripts/run_vps_paper_cycle.py --profile vps_paper --report-file logs/vps_paper_cycle_report.json
+```
+
+12) Validate account policy to ENV linking before runtime:
+
+```bash
+python scripts/validate_account_env.py --config configs/accounts_baseline.yaml --env-file local.env --require-secrets
+```
+
+13) Control account governance state:
+
+```bash
+python scripts/account_control.py status --accounts-config configs/accounts_baseline.yaml
+python scripts/account_control.py pause --account-id DEMO_A --reason "manual risk hold"
+python scripts/account_control.py resume --account-id DEMO_A --mode demo --reason "manual clear"
+```
+
+14) Rotate and summarize observability logs:
+
+```bash
+python scripts/rotate_observability_events.py --events-file logs/events.jsonl --archive-dir logs/archive
+python scripts/summarize_observability.py --events-file logs/events.jsonl --since-minutes 60
+```
+
+15) VPS scheduler artifacts:
+- cron example: `ops/vps/quantbridge_paper.cron`
+- systemd service example: `ops/vps/quantbridge-paper.service`
+
 Auth help:
 - `docs/AUTH_SETUP.md`
+- `docs/PAPER_ROLLOUT.md`
 
 Expected output:
 

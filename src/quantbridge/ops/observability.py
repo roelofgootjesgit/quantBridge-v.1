@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -42,9 +42,22 @@ class EventSummary:
     event_types: dict[str, int] = field(default_factory=dict)
     accounts: dict[str, int] = field(default_factory=dict)
     errors: int = 0
+    window_minutes: int | None = None
 
 
-def summarize_jsonl_events(path: str | Path) -> EventSummary:
+def _parse_iso_ts(value: str) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return datetime.fromisoformat(text)
+    except Exception:
+        return None
+
+
+def summarize_jsonl_events(path: str | Path, since_minutes: int | None = None) -> EventSummary:
     event_counter: Counter[str] = Counter()
     account_counter: Counter[str] = Counter()
     errors = 0
@@ -53,16 +66,28 @@ def summarize_jsonl_events(path: str | Path) -> EventSummary:
     if not p.exists():
         return EventSummary(total_events=0)
 
+    cutoff: datetime | None = None
+    if since_minutes is not None and int(since_minutes) > 0:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=int(since_minutes))
+
     for raw in p.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line:
             continue
-        total += 1
         try:
             event = json.loads(line)
         except Exception:
             errors += 1
             continue
+        event_dt = _parse_iso_ts(str(event.get("ts", "")))
+        if cutoff is not None:
+            if event_dt is None:
+                continue
+            if event_dt.tzinfo is None:
+                event_dt = event_dt.replace(tzinfo=timezone.utc)
+            if event_dt < cutoff:
+                continue
+        total += 1
         event_type = str(event.get("event_type", "unknown"))
         event_counter[event_type] += 1
         payload = event.get("payload", {}) or {}
@@ -77,5 +102,25 @@ def summarize_jsonl_events(path: str | Path) -> EventSummary:
         event_types=dict(event_counter),
         accounts=dict(account_counter),
         errors=errors,
+        window_minutes=since_minutes,
     )
+
+
+def rotate_jsonl_events(path: str | Path, archive_dir: str | Path = "logs/archive") -> dict:
+    src = Path(path)
+    archive_root = Path(archive_dir)
+    if not src.exists() or src.stat().st_size == 0:
+        return {"rotated": False, "reason": "missing_or_empty", "source": str(src)}
+
+    archive_root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    dst = archive_root / f"{src.stem}-{stamp}{src.suffix}"
+    src.replace(dst)
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("", encoding="utf-8")
+    return {
+        "rotated": True,
+        "source": str(src),
+        "archive": str(dst),
+    }
 

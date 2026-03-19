@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,9 +33,8 @@ def run_step(name: str, command: list[str]) -> dict:
     }
 
 
-def main() -> int:
-    python = sys.executable
-    steps = [
+def default_steps(python: str) -> list[tuple[str, list[str]]]:
+    return [
         (
             "smoke_mock",
             [python, "scripts/ctrader_smoke.py", "--config", "configs/ctrader_icmarkets_demo.yaml", "--mode", "mock"],
@@ -145,16 +147,55 @@ def main() -> int:
         ),
     ]
 
+
+def load_steps_from_profile(profile_name: str, python: str) -> list[tuple[str, list[str]]]:
+    profile_path = ROOT / "configs" / "suite_profiles.yaml"
+    if not profile_path.exists():
+        raise FileNotFoundError(f"suite profile file missing: {profile_path}")
+    config = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+    profiles = config.get("profiles", {}) or {}
+    profile = profiles.get(profile_name)
+    if not profile:
+        raise ValueError(f"unknown suite profile: {profile_name}")
+
+    out: list[tuple[str, list[str]]] = []
+    for raw_step in profile:
+        name = str(raw_step.get("name", "")).strip()
+        cmd = [str(python if token == "{python}" else token) for token in (raw_step.get("command", []) or [])]
+        if not name or not cmd:
+            continue
+        out.append((name, cmd))
+    return out
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run QuantBridge regression suites.")
+    parser.add_argument("--profile", default="", help="Suite profile name from configs/suite_profiles.yaml")
+    parser.add_argument("--report-file", default="", help="Optional JSON file to persist suite report")
+    args = parser.parse_args()
+
+    python = sys.executable
+    if args.profile:
+        steps = load_steps_from_profile(profile_name=args.profile, python=python)
+    else:
+        steps = default_steps(python)
+
     results = [run_step(name=name, command=cmd) for name, cmd in steps]
     failed = [r for r in results if not r["ok"]]
     output = {
-        "suite": "quantbridge_regression_mock",
+        "suite": args.profile or "quantbridge_regression_mock",
         "total_steps": len(results),
         "passed": len(results) - len(failed),
         "failed": len(failed),
         "ok": len(failed) == 0,
         "results": results,
     }
+    if args.report_file:
+        report_path = Path(args.report_file)
+        if not report_path.is_absolute():
+            report_path = ROOT / report_path
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(output, indent=2))
     return 0 if len(failed) == 0 else 1
 
