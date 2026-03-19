@@ -33,6 +33,7 @@ Implemented now:
 - prop risk gate (pre-trade limits + breach blocking)
 - account state machine + policy-aware account selection
 - persistent account governance store + health-aware eligibility checks
+- multi-account execution planning (single/primary-backup/fanout)
 
 Partially implemented:
 - cTrader Open API connect/auth + basic request flows
@@ -55,6 +56,7 @@ scripts/
   run_runtime_control.py
   run_order_lifecycle_check.py
   run_account_orchestration_check.py
+  run_multi_account_execution_check.py
 src/quantbridge/
   execution/
     broker_contract.py
@@ -77,6 +79,8 @@ src/quantbridge/
     account_state_machine.py
   router/
     account_selector.py
+    execution_plan_builder.py
+    execution_orchestrator.py
 ```
 
 ## Quick Start
@@ -147,6 +151,16 @@ Health/persistence simulation examples:
 - simulate max positions reached:
   `python scripts/run_account_orchestration_check.py --config configs/accounts_baseline.yaml --open-positions DEMO_A:3`
 
+9) Run multi-account execution policy check:
+
+```bash
+python scripts/run_multi_account_execution_check.py --config configs/accounts_baseline.yaml --instrument XAUUSD --routing-mode primary_backup --units 100
+```
+
+Other routing modes:
+- `--routing-mode single`
+- `--routing-mode fanout --max-fanout-accounts 2`
+
 Auth help:
 - `docs/AUTH_SETUP.md`
 
@@ -169,7 +183,8 @@ Expected output:
 - Milestone D: runtime control + lifecycle safety (done baseline)
 - Milestone E: account orchestration baseline (done baseline)
 - Milestone F: persistent governance + health-aware routing (done baseline)
-- Milestone G: multi-account scaling + fanout (in progress)
+- Milestone G: multi-account routing + execution planning (done baseline)
+- Milestone H: multi-account scaling + production observability (in progress)
 
 ## Engineering Rules
 
