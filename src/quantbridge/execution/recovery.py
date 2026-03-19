@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 
 from quantbridge.execution.broker_contract import BrokerContract
 from quantbridge.execution.models import Position
+from quantbridge.execution.state_validator import ReconcileActions, StateValidator
 
 
 def _utc_now_iso() -> str:
@@ -38,6 +39,8 @@ class RecoveryResult:
     synced_positions: int
     rebuilt_symbols: List[str]
     dropped_symbols: List[str]
+    updated_symbols: List[str]
+    reconciliation: Dict[str, List[dict]]
     registry_path: str
     last_error: Optional[str] = None
 
@@ -66,18 +69,31 @@ class PositionRegistry:
         tmp_path.write_text(payload + "\n", encoding="utf-8")
         tmp_path.replace(self.path)
 
-    def rebuild_from_broker(self, positions: List[Position], strategy: str = "unknown") -> tuple[List[str], List[str]]:
-        previous = self.load()
-        rebuilt: Dict[str, dict] = {}
+    def apply_reconciliation(
+        self,
+        broker_positions: List[Position],
+        local_positions: Dict[str, dict],
+        actions: ReconcileActions,
+        strategy: str,
+    ) -> Dict[str, dict]:
+        # Broker is source of truth for open-position existence.
+        local_map = {str(symbol).upper(): payload for symbol, payload in local_positions.items()}
+        broker_map = {str(position.instrument).upper(): position for position in broker_positions}
+        reconciled: Dict[str, dict] = {}
 
-        for position in positions:
-            symbol = str(position.instrument).upper()
-            rebuilt[symbol] = _position_to_registry_entry(position, strategy=strategy)
+        for symbol, position in broker_map.items():
+            local_entry = local_map.get(symbol, {})
+            local_strategy = str(local_entry.get("strategy", "")).strip()
+            reconciled[symbol] = _position_to_registry_entry(
+                position=position,
+                strategy=local_strategy or strategy,
+            )
 
-        dropped_symbols = sorted([symbol for symbol in previous.keys() if symbol not in rebuilt.keys()])
-        rebuilt_symbols = sorted(rebuilt.keys())
-        self.save(rebuilt)
-        return rebuilt_symbols, dropped_symbols
+        # Keep actions referenced so future callers can use this method as an
+        # explicit "apply(action-set)" step without changing persistence behavior.
+        _ = actions
+        self.save(reconciled)
+        return reconciled
 
 
 class ExecutionRecoveryManager:
@@ -92,6 +108,7 @@ class ExecutionRecoveryManager:
     ) -> None:
         self.broker = broker
         self.registry = PositionRegistry(registry_path)
+        self.validator = StateValidator()
         self.reconnect_retries = max(1, int(reconnect_retries))
         self.reconnect_backoff_seconds = max(0.0, float(reconnect_backoff_seconds))
 
@@ -119,6 +136,8 @@ class ExecutionRecoveryManager:
                 synced_positions=0,
                 rebuilt_symbols=[],
                 dropped_symbols=[],
+                updated_symbols=[],
+                reconciliation={"add": [], "remove": [], "update": []},
                 registry_path=str(self.registry.path),
                 last_error=last_error,
             )
@@ -132,20 +151,38 @@ class ExecutionRecoveryManager:
                 synced_positions=0,
                 rebuilt_symbols=[],
                 dropped_symbols=[],
+                updated_symbols=[],
+                reconciliation={"add": [], "remove": [], "update": []},
                 registry_path=str(self.registry.path),
                 last_error=f"sync_failed: {exc}",
             )
 
-        rebuilt_symbols, dropped_symbols = self.registry.rebuild_from_broker(
-            positions=positions,
+        local_positions = self.registry.load()
+        actions = self.validator.reconcile(
+            broker_positions=positions,
+            local_positions=local_positions,
+        )
+        reconciled = self.registry.apply_reconciliation(
+            broker_positions=positions,
+            local_positions=local_positions,
+            actions=actions,
             strategy=strategy,
         )
+        rebuilt_symbols = sorted(reconciled.keys())
+        dropped_symbols = sorted([item["symbol"] for item in actions.remove])
+        updated_symbols = sorted([item["symbol"] for item in actions.update])
         return RecoveryResult(
             connected=True,
             reconnect_attempts=attempts,
             synced_positions=len(positions),
             rebuilt_symbols=rebuilt_symbols,
             dropped_symbols=dropped_symbols,
+            updated_symbols=updated_symbols,
+            reconciliation={
+                "add": actions.add,
+                "remove": actions.remove,
+                "update": actions.update,
+            },
             registry_path=str(self.registry.path),
             last_error=None,
         )
