@@ -1,10 +1,10 @@
-# QuantBridge v1
+# quantbridgev1
 
-Broker-agnostic execution infrastructure for trading bots.
+Broker-agnostic execution infrastructure for trading bots (**Quant suite**: sibling repos `quantmetrics_os`, `quantbuildv1`, **`quantbridgev1`**, `quantlogv1`, `quantanalyticsv1`).
 
 ## Why This Exists
 
-QuantBridge separates strategy logic from broker execution:
+**quantbridgev1** separates strategy logic from broker execution:
 
 bot -> risk -> routing -> broker adapter -> broker API -> execution result
 
@@ -244,6 +244,16 @@ Expected output:
   "close_order": true
 }
 ```
+
+## Suite repositories (GitHub)
+
+| Repo | Remote |
+| --- | --- |
+| `quantmetrics_os` | [roelofgootjesgit/quantmetrics_os](https://github.com/roelofgootjesgit/quantmetrics_os) |
+| `quantbuildv1` | [roelofgootjesgit/quantbuildv1](https://github.com/roelofgootjesgit/quantbuildv1) |
+| `quantbridgev1` (**this**) | [roelofgootjesgit/quantbridgev1](https://github.com/roelofgootjesgit/quantbridgev1) |
+| `quantlogv1` | [roelofgootjesgit/quantlogv1](https://github.com/roelofgootjesgit/quantlogv1) |
+| `quantanalyticsv1` | [roelofgootjesgit/quantanalyticsv1](https://github.com/roelofgootjesgit/quantanalyticsv1) |
 
 ## Milestones
 
