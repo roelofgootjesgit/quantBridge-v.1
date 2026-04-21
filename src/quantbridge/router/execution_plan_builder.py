@@ -23,6 +23,7 @@ class TradeRequest:
     account_group: str = "default"
     routing_mode: RoutingPolicyMode = "single"
     max_fanout_accounts: Optional[int] = None
+    trace_id: str = ""
 
 
 @dataclass(frozen=True)

@@ -27,10 +27,51 @@ class OrderLifecycleResult:
     error: Optional[str] = None
     risk_decision: Optional[dict] = None
     timestamp: str = field(default_factory=_utc_now_iso)
+    order_ref: Optional[str] = None
+    requested_price: Optional[float] = None
+    fill_price: Optional[float] = None
+    slippage: Optional[float] = None
+    fill_latency_ms: Optional[float] = None
+    spread_at_fill: Optional[float] = None
 
 
 class OrderManager:
     """Manage post-order lifecycle validation and protection checks."""
+
+    @staticmethod
+    def _intent_reference_price(direction: str, quote: Optional[dict]) -> tuple[Optional[float], Optional[float]]:
+        """Return (reference entry price for intent, spread from quote)."""
+        if not quote:
+            return None, None
+        d = (direction or "").strip().upper()
+        spr = quote.get("spread")
+        spread_f: Optional[float] = None
+        if spr is not None:
+            try:
+                spread_f = float(spr)
+            except (TypeError, ValueError):
+                spread_f = None
+        if d in ("BUY", "LONG"):
+            px = quote.get("ask") if quote.get("ask") is not None else quote.get("bid")
+        else:
+            px = quote.get("bid") if quote.get("bid") is not None else quote.get("ask")
+        if px is None:
+            return None, spread_f
+        try:
+            return float(px), spread_f
+        except (TypeError, ValueError):
+            return None, spread_f
+
+    @staticmethod
+    def _resolve_order_ref(client_order_ref: str, order: OrderResult) -> Optional[str]:
+        ref = (client_order_ref or "").strip()
+        if ref:
+            return ref
+        if order.order_id:
+            return str(order.order_id)
+        if order.trade_id:
+            return str(order.trade_id)
+        return None
 
     def __init__(
         self,
@@ -179,6 +220,10 @@ class OrderManager:
                 )
             units = float(decision.adjusted_units)
 
+        quote_submit = self.broker.get_current_price(instrument)
+        requested_price, _sq0 = self._intent_reference_price(direction, quote_submit)
+        t_submit_mono = time.perf_counter()
+
         order = self.place_order(
             instrument=instrument,
             direction=direction,
@@ -188,6 +233,7 @@ class OrderManager:
             comment=comment,
             client_order_ref=client_order_ref,
         )
+        oref = self._resolve_order_ref(client_order_ref, order)
         if not order.success:
             self._trigger_failsafe(f"order_rejected:{order.error_code or order.message or 'unknown'}")
             return OrderLifecycleResult(
@@ -198,6 +244,7 @@ class OrderManager:
                 message=order.message or "order_rejected",
                 error=order.error_code or "order_rejected",
                 risk_decision=risk_decision_dict,
+                order_ref=oref,
             )
 
         fill_ok, filled_position, fill_error = self.confirm_fill(
@@ -205,6 +252,30 @@ class OrderManager:
             instrument=instrument,
             expected_units=units,
         )
+        t_after_fill_mono = time.perf_counter()
+        fill_latency_ms = (t_after_fill_mono - t_submit_mono) * 1000.0
+
+        quote_fill = self.broker.get_current_price(instrument)
+        spread_at_fill: Optional[float] = None
+        if quote_fill is not None and quote_fill.get("spread") is not None:
+            try:
+                spread_at_fill = float(quote_fill["spread"])
+            except (TypeError, ValueError):
+                spread_at_fill = None
+
+        fill_price: Optional[float] = None
+        if filled_position is not None:
+            fill_price = float(filled_position.entry_price)
+        elif order.fill_price is not None:
+            try:
+                fill_price = float(order.fill_price)
+            except (TypeError, ValueError):
+                fill_price = None
+
+        slippage: Optional[float] = None
+        if requested_price is not None and fill_price is not None:
+            slippage = abs(fill_price - requested_price)
+
         if not fill_ok:
             self._trigger_failsafe(f"fill_not_confirmed:{fill_error or 'unknown'}")
             return OrderLifecycleResult(
@@ -216,6 +287,12 @@ class OrderManager:
                 message=fill_error or "fill_not_confirmed",
                 error=fill_error or "fill_not_confirmed",
                 risk_decision=risk_decision_dict,
+                order_ref=oref,
+                requested_price=requested_price,
+                fill_price=fill_price,
+                slippage=slippage,
+                fill_latency_ms=fill_latency_ms,
+                spread_at_fill=spread_at_fill,
             )
 
         if not enforce_protection:
@@ -229,6 +306,12 @@ class OrderManager:
                 filled_units=filled_position.units if filled_position else None,
                 message="order_filled_without_protection_check",
                 risk_decision=risk_decision_dict,
+                order_ref=oref,
+                requested_price=requested_price,
+                fill_price=fill_price,
+                slippage=slippage,
+                fill_latency_ms=fill_latency_ms,
+                spread_at_fill=spread_at_fill,
             )
 
         protection_ok, protected_position, protection_error = self.ensure_protection(
@@ -250,6 +333,12 @@ class OrderManager:
                 message=protection_error or "protection_not_confirmed",
                 error=protection_error or "protection_not_confirmed",
                 risk_decision=risk_decision_dict,
+                order_ref=oref,
+                requested_price=requested_price,
+                fill_price=fill_price,
+                slippage=slippage,
+                fill_latency_ms=fill_latency_ms,
+                spread_at_fill=spread_at_fill,
             )
 
         return OrderLifecycleResult(
@@ -262,4 +351,10 @@ class OrderManager:
             filled_units=protected_position.units if protected_position else None,
             message="order_validated",
             risk_decision=risk_decision_dict,
+            order_ref=oref,
+            requested_price=requested_price,
+            fill_price=fill_price,
+            slippage=slippage,
+            fill_latency_ms=fill_latency_ms,
+            spread_at_fill=spread_at_fill,
         )

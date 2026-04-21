@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Optional
+from uuid import uuid4
 
 from quantbridge.execution.order_manager import OrderLifecycleResult
 from quantbridge.router.execution_plan_builder import ExecutionPlanBuilder, TradeRequest
@@ -26,6 +27,12 @@ class AccountExecutionResult:
     order_id: str | None = None
     filled_units: float | None = None
     risk_decision: dict | None = None
+    order_ref: str | None = None
+    requested_price: float | None = None
+    fill_price: float | None = None
+    slippage: float | None = None
+    fill_latency_ms: float | None = None
+    spread_at_fill: float | None = None
 
 
 @dataclass(frozen=True)
@@ -73,7 +80,52 @@ class MultiAccountExecutionOrchestrator:
             order_id=lifecycle.order_id,
             filled_units=lifecycle.filled_units,
             risk_decision=lifecycle.risk_decision,
+            order_ref=lifecycle.order_ref,
+            requested_price=lifecycle.requested_price,
+            fill_price=lifecycle.fill_price,
+            slippage=lifecycle.slippage,
+            fill_latency_ms=lifecycle.fill_latency_ms,
+            spread_at_fill=lifecycle.spread_at_fill,
         )
+
+    def _quantlog_trace_id(self, request: TradeRequest) -> str:
+        tid = str(getattr(request, "trace_id", "") or "").strip()
+        if tid:
+            return tid
+        return f"trace_qbr_{uuid4().hex[:12]}"
+
+    def _emit_quantlog_execution_events(self, request: TradeRequest, account_id: str, lc: OrderLifecycleResult) -> None:
+        """Emit canonical QuantLog-shaped events when event_callback is wired (JSONL sink)."""
+        if self.event_callback is None:
+            return
+        trace = self._quantlog_trace_id(request)
+        base: dict = {
+            "trace_id": trace,
+            "account_id": account_id,
+            "symbol": request.instrument,
+            "instrument": request.instrument,
+            "strategy_id": request.strategy,
+        }
+        if lc.status != "risk_blocked" and (lc.order_id or lc.order_ref):
+            sub_payload = {
+                **base,
+                "order_ref": lc.order_ref or str(lc.order_id or ""),
+                "side": request.direction,
+                "volume": float(request.units),
+            }
+            self._emit_event("order_submitted", sub_payload)
+        if lc.fill_confirmed and lc.trade_id:
+            fill_payload = {
+                **base,
+                "trade_id": lc.trade_id,
+                "order_ref": lc.order_ref or str(lc.order_id or ""),
+                "requested_price": lc.requested_price,
+                "fill_price": lc.fill_price,
+                "slippage": lc.slippage,
+                "fill_latency_ms": lc.fill_latency_ms,
+                "spread_at_fill": lc.spread_at_fill,
+            }
+            self._emit_event("order_filled", fill_payload)
 
     def execute(
         self,
@@ -126,6 +178,7 @@ class MultiAccountExecutionOrchestrator:
                 enforce_protection=(request.sl is not None or request.tp is not None),
             )
             results.append(self._to_result(item.account_id, item.role, lifecycle))
+            self._emit_quantlog_execution_events(request, item.account_id, lifecycle)
             self._emit_event(
                 "execution.account.result",
                 {
@@ -177,6 +230,7 @@ class MultiAccountExecutionOrchestrator:
                 )
                 result = self._to_result(item.account_id, item.role, lifecycle)
                 results.append(result)
+                self._emit_quantlog_execution_events(request, item.account_id, lifecycle)
                 self._emit_event(
                     "execution.account.result",
                     {
@@ -205,6 +259,7 @@ class MultiAccountExecutionOrchestrator:
                     enforce_protection=(request.sl is not None or request.tp is not None),
                 )
                 results.append(self._to_result(item.account_id, item.role, lifecycle))
+                self._emit_quantlog_execution_events(request, item.account_id, lifecycle)
                 self._emit_event(
                     "execution.account.result",
                     {
