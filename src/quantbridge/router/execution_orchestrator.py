@@ -106,6 +106,16 @@ class MultiAccountExecutionOrchestrator:
         dc = str(getattr(request, "decision_cycle_id", "") or "").strip()
         return dc or None
 
+    @staticmethod
+    def _direction_to_trade_executed(direction: str) -> str:
+        """Map order/broker side to QuantLog trade_executed.direction (LONG|SHORT)."""
+        d = (direction or "").strip().upper()
+        if d in ("BUY", "LONG"):
+            return "LONG"
+        if d in ("SELL", "SHORT"):
+            return "SHORT"
+        return d or "LONG"
+
     def _emit_quantlog_execution_events(self, request: TradeRequest, account_id: str, lc: OrderLifecycleResult) -> None:
         """Emit canonical QuantLog-shaped events when event_callback is wired (JSONL sink)."""
         if self.event_callback is None:
@@ -145,6 +155,17 @@ class MultiAccountExecutionOrchestrator:
             if q_dc:
                 fill_payload["decision_cycle_id"] = q_dc
             self._emit_event("order_filled", fill_payload)
+            oref = lc.order_ref or str(lc.order_id or "")
+            if q_tid and oref:
+                te_payload = {
+                    **base,
+                    "trade_id": q_tid,
+                    "order_ref": oref,
+                    "direction": self._direction_to_trade_executed(request.direction),
+                }
+                if q_dc:
+                    te_payload["decision_cycle_id"] = q_dc
+                self._emit_event("trade_executed", te_payload)
 
     def execute(
         self,
